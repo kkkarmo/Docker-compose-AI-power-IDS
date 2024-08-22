@@ -23,7 +23,7 @@ This Python application is designed to monitor and analyze logs from a Suricata 
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/kkkarmo/BreadcrumbsDocker-compose-AI-power-IDS.git
+   git clone https://github.com/kkkarmo/Docker-compose-AI-power-IDS.git
    cd suricata-ids-log-analyzer
 
 2. **Set up a virtual environment (optional but recommended):**
