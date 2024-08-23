@@ -1,92 +1,76 @@
-# Suricata IDS Log Analyzer
+# AI Power IDS
 
-This Python application is designed to monitor and analyze logs from a Suricata Intrusion Detection System (IDS). It extracts public IP addresses from the logs, checks them against the VirusTotal API, and performs additional searches using the Tavily API. The results are stored in a PostgreSQL database for further analysis.
+AI Power IDS is a Dockerized application that processes log files, extracts public IPs, checks them against VirusTotal, and performs additional analysis using the Tavily API and LLAMA2 for advanced text processing. It is designed to help monitor and analyze network traffic for potential threats.
 
 ## Features
 
-- Monitors Suricata log files for changes.
-- Extracts public IP addresses from log entries.
-- Checks IP addresses against the VirusTotal API for threat analysis.
-- Gathers additional intelligence on flagged IPs using the Tavily API.
-- Processes log entries and stores results in a PostgreSQL database.
-- Scheduled tasks to run daily at 2 AM for log processing and IP checks.
-- Configurable via environment variables.
+- Extracts public IPs from Suricata `eve.json` logs.
+- Checks IPs against VirusTotal for malicious activity.
+- Utilizes the Tavily API for further analysis of flagged IPs.
+- Integrates LLAMA2 for advanced text generation and analysis.
+- Runs scheduled tasks to process logs and IPs periodically.
+- Supports Docker for easy deployment and management.
 
-## Requirements
+## Prerequisites
 
-- Python 3.9 or later
-- PostgreSQL
-- Docker and Docker Compose (for containerized deployment)
+- Docker
+- Docker Compose
+- PostgreSQL (managed by Docker in this setup)
 
-## Installation
+## Getting Started
 
-1. **Clone the repository:**
+### Clone the Repository
 
-   ```bash
-   git clone https://github.com/kkkarmo/Docker-compose-AI-power-IDS.git
-   cd suricata-ids-log-analyzer
+```bash
+git clone https://github.com/kkkarmo/ai-power-ids.git
+cd ai-power-ids
 
-2. **Set up a virtual environment (optional but recommended):**
-
-
-  python -m venv venv
-  source venv/bin/activate  
-  On Windows use `venv\Scripts\activate`
-
-3. **Install dependencies:**
-
- 
-  pip install -r requirements.txt
-
-4. **Set up environment variables:**
-
-Create a .env file in the root directory of the project:
-
+Set Up Environment Variables
+Create a .env file in the root of the project and define the following variables:
+text
 DB_NAME=your_database_name
-
 DB_USER=your_database_user
-
 DB_PASSWORD=your_database_password
-
-DB_HOST=localhost
-
+DB_HOST=db
 DB_PORT=5432
-
+LOG_FILE_PATH=/path/to/suricata/eve.json
+VT_RESULT_FILE_PATH=vt_results.txt
+CHECKED_IPS_FILE=checked_ips.pkl
+PUBLIC_IPS_FILE=Public_IPs.txt
 TAVILY_API_KEY=your_tavily_api_key
-
 VIRUSTOTAL_API_KEY=your_virustotal_api_key
-
+LLAMA2_HOST=20.20.20.26  # Change to your LLAMA2 service address
 USE_MOCK_RESPONSES=False
 
-5. **Run the application using Docker Compose:**
+Build and Run the Application
+Build the Docker image:
+bash
+docker-compose build
 
-Ensure Docker and Docker Compose are installed, then run:
+Start the application:
+bash
+docker-compose up -d
 
-docker-compose up --build
+Check the logs:
+bash
+docker-compose logs -f
 
-**Usage**
+Usage
+The application will automatically monitor the specified log file for changes and process new entries.
+It will extract public IPs, check them against VirusTotal, and perform additional analysis using the Tavily API.
+The LLAMA2 integration allows for advanced text generation based on log data, enhancing the analysis capabilities.
+Results will be stored in a PostgreSQL database.
+Stopping the Application
+To stop the application, run:
+bash
+docker-compose down
 
-The application will monitor the specified Suricata log file (eve.json) for new entries.
-It will extract public IP addresses and check them against VirusTotal and Tavily APIs.
-Results will be stored in the PostgreSQL database.
-
-**Directory Structure**
-
-.
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-├── .env
-├── main.py  # The main application script
-└── logs/    # Directory for log files
-└── data/    # Directory for storing results and checked IPs
-
-**Logging**
-
-Logs are stored in debug.log in the root directory. You can adjust the logging level and format in the script.
-
-**Contributing**
-Feel free to submit issues or pull requests. Contributions are welcome!
-
-**License**
-This project is licensed under the MIT License. See the LICENSE file for more details.
+Contributing
+Contributions are welcome! Please submit a pull request or open an issue for any suggestions or improvements.
+License
+This project is licensed under the MIT License - see the LICENSE file for details.
+Acknowledgments
+Suricata for network threat detection.
+VirusTotal for malware analysis.
+Tavily for additional threat intelligence.
+LLAMA2 for advanced text processing and generation.
