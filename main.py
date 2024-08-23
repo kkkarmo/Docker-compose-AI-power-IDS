@@ -10,10 +10,19 @@ import schedule
 import logging
 import re
 from dotenv import load_dotenv
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 from ratelimit import limits, sleep_and_retry
 import pickle
 import traceback
 import ipaddress
+import sys
+LLAMA2_HOST = os.getenv('LLAMA2_HOST', '20.20.20.26')  # Default to the IP you mentioned
+# Configure logging to output to stdout
+#logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
+
+
+
 
 # Load environment variables
 load_dotenv()
@@ -33,10 +42,10 @@ DATABASE_CONFIG = {
 connection_pool = psycopg2.pool.SimpleConnectionPool(1, 10, **DATABASE_CONFIG)
 
 # File paths
-LOG_FILE_PATH = os.getenv('LOG_FILE_PATH', '/app/logs/eve.json')
-VT_RESULT_FILE_PATH = os.getenv('VT_RESULT_FILE_PATH', '/app/data/vt_results.txt')
-CHECKED_IPS_FILE = os.getenv('CHECKED_IPS_FILE', '/app/data/checked_ips.pkl')
-PUBLIC_IPS_FILE = os.getenv('PUBLIC_IPS_FILE', '/app/data/Public_IPs.txt')
+LOG_FILE_PATH = os.getenv('LOG_FILE_PATH', '/path/to/suricata/eve.json')
+VT_RESULT_FILE_PATH = os.getenv('VT_RESULT_FILE_PATH', 'vt_results.txt')
+CHECKED_IPS_FILE = os.getenv('CHECKED_IPS_FILE', 'checked_ips.pkl')
+PUBLIC_IPS_FILE = os.getenv('PUBLIC_IPS_FILE', 'Public_IPs.txt')
 
 # API keys from environment variables
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
@@ -45,9 +54,16 @@ USE_MOCK_RESPONSES = os.getenv('USE_MOCK_RESPONSES', 'False').lower() in ('true'
 
 CHECK_INTERVAL = timedelta(hours=24)  # Recheck IPs every 24 hours
 
-class EveFileHandler:
-    @staticmethod
-    def extract_public_ips(file_path):
+class EveFileHandler(FileSystemEventHandler):
+    def on_modified(self, event):
+        if not event.is_directory and event.src_path.endswith('eve.json'):
+            logging.debug(f"File changed: {event.src_path}")
+            logging.debug("Processing eve.json")
+            self.extract_public_ips(event.src_path)
+        else:
+            logging.debug(f"Ignoring file change: {event.src_path}")
+
+    def extract_public_ips(self, file_path):
         logging.debug(f"Extracting public IPs from file: {file_path}")
         try:
             with open(file_path, 'r') as f:
@@ -56,10 +72,11 @@ class EveFileHandler:
                     try:
                         log_entry = json.loads(line)
                         ip = log_entry.get('src_ip')
-                        if ip and EveFileHandler.is_public_ip(ip):
+                        if ip and self.is_public_ip(ip):
                             public_ips.add(ip)
                     except json.JSONDecodeError:
                         logging.error(f"Error decoding JSON from line: {line}")
+
             with open(PUBLIC_IPS_FILE, 'w') as f:
                 for ip in public_ips:
                     f.write(f"{ip}\n")
@@ -75,29 +92,37 @@ class EveFileHandler:
         except ValueError:
             return False
 
-class IPFileHandler:
+class IPFileHandler(FileSystemEventHandler):
     def __init__(self, api_key):
         self.api_key = api_key
         self.vt_url = 'https://www.virustotal.com/api/v3/ip_addresses/'
         self.checked_ips = self.load_checked_ips()
         logging.debug(f"Initialized with API key: {api_key[:5]}...{api_key[-5:]}")
 
+    def on_modified(self, event):
+        if not event.is_directory and event.src_path.endswith('Public_IPs.txt'):
+            logging.debug(f"File changed: {event.src_path}")
+            logging.debug("Processing Public_IPs.txt")
+            self.process_ip_file(event.src_path)
+        else:
+            logging.debug(f"Ignoring file change: {event.src_path}")
+
     def process_ip_file(self, file_path):
         logging.debug(f"Processing file: {file_path}")
         try:
             with open(file_path, 'r') as f:
                 ips = f.read().splitlines()
-                logging.debug(f"IPs found: {ips}")
-                for ip in ips:
-                    if self.should_check_ip(ip):
-                        result = self.check_ip(ip)
-                        self.write_result(result)
-                        logging.debug(result)  # Log result
-                        self.checked_ips[ip] = datetime.now()
-                        self.save_checked_ips()
-                        sleep(15)  # Wait 15 seconds between checks
-                    else:
-                        logging.debug(f"Skipping IP (recently checked): {ip}")
+            logging.debug(f"IPs found: {ips}")
+            for ip in ips:
+                if self.should_check_ip(ip):
+                    result = self.check_ip(ip)
+                    self.write_result(result)
+                    logging.debug(result)  # Log result
+                    self.checked_ips[ip] = datetime.now()
+                    self.save_checked_ips()
+                    sleep(15)  # Wait 15 seconds between checks
+                else:
+                    logging.debug(f"Skipping IP (recently checked): {ip}")
         except Exception as e:
             logging.error(f"Error processing file: {str(e)}")
             traceback.print_exc()
@@ -156,34 +181,35 @@ class IPFileHandler:
             pickle.dump(self.checked_ips, f)
 
 def initialize_database():
-    conn = connection_pool.getconn()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS log_analysis (
-            id SERIAL PRIMARY KEY,
-            log_entry TEXT,
-            vt_result TEXT,
-            analysis_result TEXT
-        );
-        CREATE TABLE IF NOT EXISTS results (
-            ip TEXT PRIMARY KEY,
-            result JSONB
-        );
-    ''')
-    conn.commit()
-    cursor.close()
-    connection_pool.putconn(conn)
+    logging.info("Initializing database...")
+    try:
+        conn = connection_pool.getconn()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS log_analysis (
+                id SERIAL PRIMARY KEY,
+                log_entry TEXT,
+                vt_result TEXT,
+                analysis_result TEXT
+            );
+            CREATE TABLE IF NOT EXISTS results (
+                ip TEXT PRIMARY KEY,
+                result JSONB
+            );
+        ''')
+        conn.commit()
+        cursor.close()
+        connection_pool.putconn(conn)
+        logging.info("Database initialization complete")
+    except Exception as e:
+        logging.error(f"Database initialization failed: {str(e)}")
+        raise
 
-def process_log_data(combined_data_str):
-    prompt = f"""Analyze the following log entry, VirusTotal result, and Tavily search results:
-
-{combined_data_str}
-
-Provide a concise summary of the security implications and any recommended actions."""
-
+def process_log_data(log_data):
     response = requests.post(
-        'http://localhost:11434/generate',
-        json={'model': 'llama2', 'prompt': prompt}
+        f'http://{LLAMA2_HOST}:11434/api/generate',    
+        #'http://localhost:11434/generate',
+        json={'model': 'llama2', 'prompt': log_data}
     )
     if response.status_code == 200:
         return response.json().get('text', '')
@@ -220,6 +246,7 @@ def read_vt_results(file_path):
         logging.error(f"File {file_path} not found.")
     except json.JSONDecodeError:
         logging.error(f"Error decoding JSON from file {file_path}.")
+    
     logging.info(f"Flagged IPs: {flagged_ips}")
     logging.info(f"Error IPs: {error_ips}")
     return flagged_ips, error_ips
@@ -239,8 +266,11 @@ def mock_tavily_search(query):
 def tavily_search(query):
     if USE_MOCK_RESPONSES:
         return mock_tavily_search(query)
+
     url = "https://api.tavily.com/search"
-    headers = {"content-type": "application/json"}
+    headers = {
+        "content-type": "application/json"
+    }
     payload = {
         "api_key": TAVILY_API_KEY,
         "query": query,
@@ -266,59 +296,32 @@ def save_tavily_results_to_database(data):
         cursor.execute(sql.SQL("""
             INSERT INTO results (ip, result)
             VALUES (%s, %s)
-            ON CONFLICT (ip) DO UPDATE SET result = EXCLUDED.result
+            ON CONFLICT (ip) DO UPDATE
+            SET result = EXCLUDED.result
         """), (ip, json.dumps(result)))
     conn.commit()
     cursor.close()
     connection_pool.putconn(conn)
 
-def get_tavily_result(ip):
-    queries = [
-        f"Why is IP {ip} flagged as malicious or suspicious?",
-        f"What can be found about IP {ip} in terms of cybersecurity aspects?"
-    ]
-    results = []
-    for query in queries:
-        result = tavily_search(query)
-        results.append(result)
-    return results
-
 def process_logs():
-    vt_results, _ = read_vt_results(VT_RESULT_FILE_PATH)
+    vt_results = read_vt_results(VT_RESULT_FILE_PATH)
     with open(LOG_FILE_PATH, 'r') as file:
         log_entries = [json.loads(line.strip()) for line in file]
-    
+
     with ThreadPoolExecutor(max_workers=5) as executor:
         for log_data in log_entries:
             ip = log_data.get('src_ip')
-            if ip and EveFileHandler.is_public_ip(ip):
-                vt_result = next((result for result in vt_results if result[0] == ip), None)
-                
-                if vt_result:
-                    ip, malicious, suspicious = vt_result
-                    vt_info = f"Malicious: {malicious}, Suspicious: {suspicious}"
-                    tavily_results = get_tavily_result(ip)
-                else:
-                    vt_info = "No VT result"
-                    tavily_results = []
-                
-                combined_data = {
-                    "log": log_data,
-                    "vt_result": vt_info,
-                    "tavily_results": tavily_results
-                }
-                
-                combined_data_str = json.dumps(combined_data)
-                analysis_result = executor.submit(process_log_data, combined_data_str)
-                save_to_database(json.dumps(log_data), vt_info, analysis_result.result())
-            else:
-                logging.debug(f"Skipping non-public IP: {ip}")
+            vt_result = vt_results.get(ip, "No VT result")
+            combined_data = f"Log: {log_data}, VT: {vt_result}"
+            analysis_result = executor.submit(process_log_data, combined_data)
+            save_to_database(json.dumps(log_data), vt_result, analysis_result.result())
 
 def process_ips():
     flagged_ips, error_ips = read_vt_results(VT_RESULT_FILE_PATH)
     if not flagged_ips and not error_ips:
         logging.info("No flagged or error IPs found.")
         return
+
     tavily_results = {}
     for ip, malicious, suspicious in flagged_ips:
         logging.info(f"Searching for information about IP: {ip} (Malicious: {malicious}, Suspicious: {suspicious})")
@@ -329,20 +332,48 @@ def process_ips():
         for query in queries:
             result = tavily_search(query)
             tavily_results[ip] = result
-        if not USE_MOCK_RESPONSES:
-            sleep(5)  # Add a 5-second delay between IP searches
+            if not USE_MOCK_RESPONSES:
+                sleep(5)  # Add a 5-second delay between IP searches
+
     save_tavily_results_to_database(tavily_results)
 
-def daily_processing():
-    logging.info("Starting daily log processing")
-    process_logs()
+def scheduled_task():
     process_ips()
-    logging.info("Daily log processing completed")
-
+def run_daily():
+    logging.info("Running daily task")
+    try:
+        # Initialize the observer for the VirusTotal IP checking
+        logging.debug("Starting VirusTotal IP check observer")
+        api_key = VIRUSTOTAL_API_KEY
+        path = '.'  # Current directory
+        ip_event_handler = IPFileHandler(api_key)
+        eve_event_handler = EveFileHandler()
+        observer = Observer()
+        observer.schedule(ip_event_handler, path, recursive=False)
+        observer.schedule(eve_event_handler, path, recursive=False)
+        observer.start()
+        logging.debug("Observer started")
+    except Exception as e:
+        logging.error(f"Error starting observers: {str(e)}")
+        traceback.print_exc()
 if __name__ == '__main__':
-    initialize_database()
-    schedule.every().day.at("02:00").do(daily_processing)
-    
-    while True:
-        schedule.run_pending()
-        sleep(60)
+    logging.info("Starting the application")
+    try:
+        logging.info("Initializing database")
+        initialize_database()
+        logging.info("Database initialized")
+
+        logging.info("Setting up scheduled tasks")
+        schedule.every().day.at("00:00").do(run_daily)
+        schedule.every().monday.at("00:00").do(scheduled_task)
+        logging.info("Scheduled tasks set up")
+
+        logging.info("Entering main loop")
+        while True:
+            schedule.run_pending()
+            sleep(60)
+    except Exception as e:
+        logging.error(f"An error occurred: {str(e)}")
+        traceback.print_exc()
+    finally:
+        logging.info("Application shutdown")

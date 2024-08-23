@@ -1,35 +1,32 @@
-version: '3.8'
-
+version: '3'
 services:
-  app:
-    build: .
-    volumes:
-      - ./logs:/app/logs
-      - ./data:/app/data
-    environment:
-      - DB_NAME=ids_db
-      - DB_USER=ids_user
-      - DB_PASSWORD=ids_password
-      - DB_HOST=db
-      - DB_PORT=5432
-      - LOG_FILE_PATH=/app/logs/eve.json
-      - VT_RESULT_FILE_PATH=/app/data/vt_results.txt
-      - CHECKED_IPS_FILE=/app/data/checked_ips.pkl
-      - PUBLIC_IPS_FILE=/app/data/Public_IPs.txt
-      - TAVILY_API_KEY=${TAVILY_API_KEY}
-      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
-      - USE_MOCK_RESPONSES=${USE_MOCK_RESPONSES:-False}
-    depends_on:
-      - db
-
   db:
     image: postgres:13
     environment:
-      - POSTGRES_DB=ids_db
-      - POSTGRES_USER=ids_user
-      - POSTGRES_PASSWORD=ids_password
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   postgres_data:
